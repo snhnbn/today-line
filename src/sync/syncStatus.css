@@ -1,0 +1,179 @@
+/* 구글 드라이브 동기화 상태 표시 (SyncStatus.tsx 전용) */
+.sync {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sync__chip--button {
+  cursor: pointer;
+}
+
+.sync__chip--button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.sync__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2f9e44;
+  flex: none;
+}
+
+.sync__chip--off .sync__dot {
+  background: var(--faint);
+}
+
+.sync__chip--busy .sync__dot {
+  background: var(--focus);
+  animation: sync-pulse 1s ease-in-out infinite;
+}
+
+.sync__chip--warn {
+  color: #9a5b00;
+  border-color: rgba(214, 140, 0, 0.45);
+}
+
+.sync__chip--warn .sync__dot {
+  background: #e8a200;
+}
+
+.sync__chip--danger {
+  color: var(--danger);
+  border-color: rgba(198, 40, 40, 0.4);
+}
+
+.sync__chip--danger .sync__dot {
+  background: var(--danger);
+}
+
+@keyframes sync-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.sync .btn:disabled,
+.sync-conflict .btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sync__notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 360px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sync__notice-close {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.sync__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.sync__menu-info {
+  margin: 4px 8px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sync__menu-item {
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sync__menu-item:hover {
+  background: var(--surface-2);
+}
+
+.sync__menu-item--danger {
+  color: var(--danger);
+}
+
+/* 충돌 대화상자 */
+.sync-conflict {
+  width: min(500px, calc(100vw - 32px));
+}
+
+.sync-conflict__desc,
+.sync-conflict__tip {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sync-conflict__cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.sync-conflict__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 14px;
+}
+
+.sync-conflict__title {
+  font-weight: 600;
+}
+
+.sync-conflict__time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sync-conflict__foot {
+  flex-wrap: wrap;
+}

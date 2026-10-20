@@ -3,6 +3,7 @@ import { useAppStore } from '../store/appStore'
 import { useUiStore, type Zoom } from '../store/uiStore'
 import { downloadAppData, readAppDataFile } from '../storage/jsonFile'
 import { AppDataError } from '../lib/appData'
+import { SyncStatus } from './SyncStatus'
 
 const ZOOMS: { key: Zoom; label: string }[] = [
   { key: 'week', label: '주' },
@@ -68,6 +69,7 @@ export function Toolbar() {
       </label>
 
       <span className="spacer" />
+      <SyncStatus />
       {saveError && <span className="save-error" role="alert">{saveError}</span>}
       <button type="button" className="btn" onClick={onExport}>내보내기</button>
       <button type="button" className="btn" onClick={() => fileRef.current?.click()}>불러오기</button>

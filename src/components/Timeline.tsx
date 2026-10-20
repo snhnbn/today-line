@@ -22,6 +22,21 @@ const BLOCK_H = 24
 const MARKER_H = 26
 const ROW_PAD = 10
 const MIN_ROW_H = 60
+/** '오늘' 위치에서 오늘 왼쪽으로 보이는 날짜 수 */
+const TODAY_LEAD_DAYS = 2
+/** 마커 요소 왼쪽 끝 ~ ◆ 중심 거리 (◆ 12px + 좌우 여백 2px) */
+const DIAMOND_HALF = 8
+/** 같은 날짜에 겹친 ◆를 옆으로 어긋나게 놓는 간격 */
+const STACK_STEP = 5
+/** 겹친 ◆ 표시 최대 개수 (그 이상은 같은 자리에 겹친다) */
+const STACK_MAX = 3
+/** ◆와 라벨 사이 간격(.marker gap) + 다음 ◆ 앞 여백 */
+const LABEL_GAP = 6
+const NEXT_MARGIN = 10
+/** 다음 마커가 없을 때 라벨 최대 폭 */
+const LABEL_MAX_W = 240
+/** 이보다 좁으면 라벨을 숨기고 ◆만 보인다 */
+const LABEL_MIN_W = 18
 
 type BlockDragType = 'move' | 'start' | 'end'
 type Drag =
@@ -33,7 +48,6 @@ interface RowLayout {
   periods: Block[]
   markers: Block[]
   periodLanes: LaneLayout
-  markerLanes: LaneLayout
   height: number
   top: number
 }
@@ -44,11 +58,53 @@ function dragDates(d: Extract<Drag, { blockId: string }>): { start: ISODate; end
   return { start: d.origStart, end: maxISO(addDaysISO(d.origEnd, d.delta), d.origStart) }
 }
 
-/** 마커 라벨이 차지하는 대략적인 폭(px) */
-function estimateLabelWidth(text: string): number {
-  let w = 0
-  for (const ch of text) w += ch.charCodeAt(0) > 0x1100 ? 12.5 : 7
-  return Math.min(w, 220) + 26
+interface MarkerPlacement {
+  /** 같은 날짜 묶음 안에서의 순서 (0이 대표) */
+  index: number
+  /** 같은 날짜 마커 수 */
+  count: number
+  /** ◆를 옆으로 어긋나게 놓는 거리(px) */
+  offset: number
+  /** 대표 마커만: 라벨 최대 폭(px). null이면 라벨 숨김 */
+  labelMaxW: number | null
+  /** 대표 마커만: 같은 날짜 마커 전체 제목 */
+  titles: string[]
+}
+
+/**
+ * 한 행의 마커를 한 줄에 놓는다. 같은 날짜 마커는 ◆를 조금씩 어긋나게 겹치고 첫 마커만 라벨('외 n개')을 단다.
+ * 라벨은 오른쪽 가장 가까운 다른 날짜 마커의 ◆ 앞까지만 쓴다.
+ */
+function placeMarkers(
+  items: { block: Block; day: number }[], dw: number, firstId: string | null,
+): Map<string, MarkerPlacement> {
+  const groups = new Map<number, Block[]>()
+  for (const { block, day } of items) {
+    const g = groups.get(day)
+    // 드래그 중인 마커는 묶음의 대표(맨 앞)로 둔다
+    if (g) g[block.id === firstId ? 'unshift' : 'push'](block)
+    else groups.set(day, [block])
+  }
+  const days = [...groups.keys()].sort((a, b) => a - b)
+  const result = new Map<string, MarkerPlacement>()
+  days.forEach((day, i) => {
+    const group = groups.get(day)!
+    const count = group.length
+    const stackW = Math.min(count - 1, STACK_MAX - 1) * STACK_STEP
+    const next = days[i + 1]
+    const avail = next === undefined
+      ? LABEL_MAX_W
+      : Math.min(LABEL_MAX_W, (next - day) * dw - DIAMOND_HALF - stackW - LABEL_GAP - NEXT_MARGIN)
+    const labelMaxW = avail >= LABEL_MIN_W ? avail : null
+    const titles = group.map((b) => b.title || '(제목 없음)')
+    group.forEach((b, index) => {
+      result.set(b.id, {
+        index, count, offset: Math.min(index, STACK_MAX - 1) * STACK_STEP,
+        labelMaxW: index === 0 ? labelMaxW : null, titles: index === 0 ? titles : [],
+      })
+    })
+  })
+  return result
 }
 
 function rangeLabel(start: ISODate, end: ISODate): string {
@@ -110,53 +166,51 @@ export function Timeline() {
       const periodLanes = assignLanes(
         periods.map((b) => ({ id: b.id, start: diffDays(b.startDate, range.start), end: diffDays(b.endDate, range.start) })),
       )
-      const markerLanes = assignLanes(
-        markers.map((b) => {
-          const s = diffDays(b.startDate, range.start)
-          return { id: b.id, start: s, end: s + Math.ceil(estimateLabelWidth(b.title) / dw) }
-        }),
-      )
-      const height = Math.max(MIN_ROW_H, ROW_PAD * 2 + periodLanes.laneCount * LANE_H + markerLanes.laneCount * MARKER_H)
-      const row = { project, periods, markers, periodLanes, markerLanes, height, top }
+      // 마커는 항상 한 줄 (없으면 줄도 없음)
+      const markerRow = markers.length > 0 ? MARKER_H : 0
+      const height = Math.max(MIN_ROW_H, ROW_PAD * 2 + periodLanes.laneCount * LANE_H + markerRow)
+      const row = { project, periods, markers, periodLanes, height, top }
       top += height
       return row
     })
-  }, [visibleProjects, blocks, hideDone, range.start, dw])
+  }, [visibleProjects, blocks, hideDone, range.start])
   const bodyH = rows.reduce((h, r) => h + r.height, 0)
 
-  // ── 스크롤: 화면 중앙 날짜를 기억해 두었다가 줌·범위가 바뀌면 그 날짜를 다시 중앙에 둔다
-  const centerRef = useRef<ISODate>(today)
+  // ── 스크롤: 보이는 영역 왼쪽 끝 날짜를 기억해 두었다가 줌·범위·창 크기가 바뀌면 그 날짜를 다시 왼쪽 끝에 둔다.
+  // '오늘' 위치는 왼쪽 끝이 오늘-2일(전전날, 전날, 오늘 순으로 보임).
+  const homeDate = addDaysISO(today, -TODAY_LEAD_DAYS)
+  const leftRef = useRef<ISODate>(homeDate)
   const visibleW = () => (scrollRef.current ? scrollRef.current.clientWidth - NAME_W : 0)
 
   const scrollToDate = (iso: ISODate, behavior: ScrollBehavior) => {
     const el = scrollRef.current
     if (!el) return
-    el.scrollTo({ left: (diffDays(iso, range.start) + 0.5) * dw - visibleW() / 2, behavior })
+    el.scrollTo({ left: diffDays(iso, range.start) * dw, behavior })
   }
 
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    const idx = Math.floor((el.scrollLeft + visibleW() / 2) / dw)
-    centerRef.current = addDaysISO(range.start, idx)
+    // 절반 이상 보이는 첫 날짜를 왼쪽 끝 날짜로 본다
+    leftRef.current = addDaysISO(range.start, Math.round(el.scrollLeft / dw))
   }
 
   useLayoutEffect(() => {
-    scrollToDate(centerRef.current, 'auto')
+    scrollToDate(leftRef.current, 'auto')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dw, range.start])
 
-  // 창 크기가 바뀌어도 보던 날짜가 중앙에 남도록
+  // 창 크기가 바뀌어도 보던 날짜가 왼쪽 끝에 남도록 (오른쪽 끝에서 줄어들며 스크롤이 밀린 경우 복원)
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     let lastW = el.clientWidth
     const ro = new ResizeObserver(() => {
       if (el.clientWidth === lastW) return
-      const center = centerRef.current
+      const left = leftRef.current
       lastW = el.clientWidth
-      el.scrollLeft = (diffDays(center, range.start) + 0.5) * dw - (el.clientWidth - NAME_W) / 2
-      centerRef.current = center
+      el.scrollLeft = diffDays(left, range.start) * dw
+      leftRef.current = left
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -165,7 +219,7 @@ export function Timeline() {
   useEffect(() => {
     const el = scrollRef.current
     if (!scrollRequest || !el) return
-    if (scrollRequest.command === 'today') scrollToDate(today, 'smooth')
+    if (scrollRequest.command === 'today') scrollToDate(homeDate, 'smooth')
     else el.scrollBy({ left: (scrollRequest.command === 'next' ? 1 : -1) * STEP_DAYS[zoom] * dw, behavior: 'smooth' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollRequest?.nonce])
@@ -178,10 +232,12 @@ export function Timeline() {
     if (!block || !el) return
     if (hideDone && block.done) setHideDone(false)
     const row = rows.find((r) => r.project.id === block.projectId)
-    const blockW = spanDays(block.startDate, block.endDate) * dw
-    const left = blockW < visibleW() * 0.8
-      ? xOf(block.startDate) + blockW / 2 - visibleW() / 2
-      : xOf(block.startDate) - 80
+    // 항목이 이미 가로로 다 보이면 가로 위치는 그대로, 아니면 '오늘' 보기와 같은 규칙으로
+    // 항목 시작일-2일을 왼쪽 끝에 둔다(긴 항목은 시작 부분부터 보인다).
+    const blockL = xOf(block.startDate)
+    const blockR = xOf(block.endDate) + dw
+    const fullyVisible = blockL >= el.scrollLeft && blockR <= el.scrollLeft + visibleW()
+    const left = fullyVisible ? el.scrollLeft : xOf(addDaysISO(block.startDate, -TODAY_LEAD_DAYS))
     el.scrollTo({ left, top: row ? Math.max(0, row.top - 20) : el.scrollTop, behavior: 'smooth' })
     setFlashId(block.id)
     const t = setTimeout(() => setFlashId(null), 1800)
@@ -326,6 +382,7 @@ export function Timeline() {
     return labels
   }, [range.start, range.days, zoom])
 
+  const draggingId = drag && drag.type !== 'create' && drag.moved ? drag.blockId : null
   const todayX = (diffDays(today, range.start) + 0.5) * dw
   const bubble = drag?.moved
     ? drag.type === 'create'
@@ -376,6 +433,12 @@ export function Timeline() {
               const bandLeft = xOf(project.startDate)
               const bandW = spanDays(project.startDate, project.endDate) * dw
               const ghost = drag?.type === 'create' && drag.moved && drag.projectId === project.id ? drag : null
+              // 드래그 중 날짜를 반영해 매 렌더마다 배치한다(마커 수가 적어 비용은 작다)
+              const markerPlaces = placeMarkers(
+                row.markers.map((b) => ({ block: b, day: diffDays(datesOf(b).start, range.start) })),
+                dw,
+                draggingId,
+              )
               return (
                 <div key={project.id} className="tl-row" style={{ height: row.height }} data-project={project.id}>
                   <button
@@ -446,7 +509,10 @@ export function Timeline() {
                     {row.markers.map((b) => {
                       const { start } = datesOf(b)
                       const color = blockColor(b, project)
-                      const lane = row.markerLanes.laneOf.get(b.id) ?? 0
+                      const place = markerPlaces.get(b.id)
+                      const offset = place?.offset ?? 0
+                      const extra = place && place.index === 0 ? place.count - 1 : 0
+                      const showLabel = !!place && place.index === 0 && place.labelMaxW !== null
                       const outside = start < project.startDate || start > project.endDate
                       const cls = [
                         'marker',
@@ -461,15 +527,30 @@ export function Timeline() {
                           key={b.id}
                           className={cls}
                           data-block={b.id}
-                          style={{ left: xOf(start) + dw / 2 - 8, top: ROW_PAD + row.periodLanes.laneCount * LANE_H + lane * MARKER_H }}
-                          title={`${b.title}\n${formatShortWithDay(start)}${outside ? '\n⚠ 프로젝트 기간 밖' : ''}`}
+                          style={{
+                            left: xOf(start) + dw / 2 - DIAMOND_HALF + offset,
+                            top: ROW_PAD + row.periodLanes.laneCount * LANE_H,
+                            zIndex: draggingId === b.id ? 4 : place && place.index > 0 ? 1 : 2,
+                          }}
+                          title={`${b.title}\n${formatShortWithDay(start)}${outside ? '\n⚠ 프로젝트 기간 밖' : ''}${
+                            extra > 0 ? `\n\n같은 날 마커 ${place!.count}개:\n${place!.titles.map((t) => `· ${t}`).join('\n')}` : ''
+                          }`}
                           onPointerDown={(e) => onBlockPointerDown(e, b)}
                         >
                           <span className="marker__diamond" style={{ background: color }} />
-                          <span className="marker__label">
-                            {b.done && <span className="block__check">✓</span>}
-                            {b.title || '(제목 없음)'}
-                          </span>
+                          {showLabel && (
+                            <span
+                              className="marker__label"
+                              style={{
+                                maxWidth: place!.labelMaxW!,
+                                marginLeft: Math.min(place!.count - 1, STACK_MAX - 1) * STACK_STEP,
+                              }}
+                            >
+                              {b.done && <span className="block__check">✓</span>}
+                              <span className="marker__text">{b.title || '(제목 없음)'}</span>
+                              {extra > 0 && <span className="marker__more">외 {extra}개</span>}
+                            </span>
+                          )}
                         </div>
                       )
                     })}

@@ -3,6 +3,7 @@ import { useAppStore } from './store/appStore'
 import { useUiStore } from './store/uiStore'
 import { createLocalAdapter } from './storage/localAdapter'
 import { todayISO } from './lib/date'
+import { startSync } from './sync/SyncManager'
 import { Toolbar } from './components/Toolbar'
 import { Timeline } from './components/Timeline'
 import { TodayPanel } from './components/TodayPanel'
@@ -65,6 +66,9 @@ function App() {
   useEffect(() => {
     void useAppStore.getState().init(createLocalAdapter())
   }, [])
+  useEffect(() => {
+    if (status === 'ready') startSync()
+  }, [status])
   useGlobalKeys()
   useTodayTicker()
 
