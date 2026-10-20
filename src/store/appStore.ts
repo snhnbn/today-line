@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { AppData, Block, ISODate, Project, StorageAdapter } from '../types'
 import { nowStamp } from '../lib/date'
 import { createSampleData } from '../lib/sample'
+import { reorderProjects } from '../lib/projectOrder'
 
 export type NewProject = Pick<Project, 'name' | 'color' | 'startDate' | 'endDate'> & { memo?: string }
 export type ProjectPatch = Partial<Omit<Project, 'id' | 'createdAt' | 'updatedAt'>>
@@ -23,6 +24,11 @@ export interface AppState {
   updateProject(id: string, patch: ProjectPatch): void
   /** 프로젝트와 그 안의 항목을 함께 지운다 */
   deleteProject(id: string): void
+  /**
+   * 보관되지 않은 프로젝트(order 오름차순) 목록에서 id 프로젝트를 toIndex(0부터, 이동 후 기준) 위치로 옮긴다.
+   * 범위 밖 toIndex는 clamp. 위치가 같거나 대상이 없거나 보관된 프로젝트면 아무것도 하지 않는다(저장도 안 함).
+   */
+  moveProject(id: string, toIndex: number): void
   addBlock(input: NewBlock): Block
   updateBlock(id: string, patch: BlockPatch): void
   deleteBlock(id: string): void
@@ -123,6 +129,13 @@ export const useAppStore = create<AppState>()((set, get) => {
         projects: get().projects.filter((p) => p.id !== id),
         blocks: get().blocks.filter((b) => b.projectId !== id),
       })
+    },
+
+    moveProject(id, toIndex) {
+      const { projects } = get()
+      const next = reorderProjects(projects, id, toIndex, nowStamp())
+      if (next === projects) return
+      commit({ projects: next })
     },
 
     addBlock(input) {

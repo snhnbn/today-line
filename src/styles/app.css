@@ -387,6 +387,58 @@ input[type='checkbox'] {
 
 .tl-row__name:hover {
   background: var(--surface-2);
+  cursor: grab;
+}
+
+/* 이름 열 왼쪽 그립: 호버하면 끌 수 있다는 단서 */
+/* 2열 x 3행 점 그리드 (절대 위치라 이름 배치에 영향 없음) */
+.tl-row__grip {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 8px;
+  height: 14px;
+  margin-top: -7px;
+  background-image: radial-gradient(circle, var(--muted) 1.4px, transparent 1.6px);
+  background-size: 4px 5px;
+  background-position: 0 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+
+.tl-row__name:hover .tl-row__grip,
+.tl-row.is-lifted .tl-row__grip {
+  opacity: 1;
+}
+
+/* 순서 드래그 중 들려 있는 행 */
+.tl-row.is-lifted {
+  position: relative;
+  z-index: 4;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.tl-row.is-lifted > * {
+  opacity: 0.6;
+}
+
+.tl-row.is-lifted .tl-row__name {
+  background: var(--surface-2);
+}
+
+/* 순서 드래그 삽입선 */
+.tl-insert-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: var(--focus);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+  z-index: 4;
 }
 
 .tl-row__name .dot {

@@ -43,6 +43,25 @@ type Drag =
   | { type: 'create'; projectId: string; anchor: number; current: number; startX: number; x: number; y: number; moved: boolean }
   | { type: BlockDragType; blockId: string; kind: Block['kind']; origStart: ISODate; origEnd: ISODate; startX: number; delta: number; x: number; y: number; moved: boolean }
 
+/** 이름 열을 잡고 행 순서를 바꾸는 드래그 */
+interface RowDrag {
+  projectId: string
+  /** 드래그 시작 시 행 인덱스 */
+  from: number
+  startY: number
+  y: number
+  /** 4px 이상 움직여 실제 드래그가 시작됐는지 */
+  active: boolean
+  /** 삽입선 위치: 행 사이 경계 인덱스 0..n */
+  slot: number
+}
+
+/** 이 거리 이상 세로로 움직이면 행 순서 드래그 시작 */
+const ROW_DRAG_THRESHOLD = 4
+/** 스크롤 영역 위/아래 가장자리에서 자동 스크롤이 시작되는 거리 */
+const AUTO_SCROLL_EDGE = 40
+const AUTO_SCROLL_MAX = 14
+
 interface RowLayout {
   project: Project
   periods: Block[]
@@ -308,6 +327,133 @@ export function Timeline() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragging, dw, range.start, range.days])
 
+  // ── 행 순서 드래그 (이름 열을 잡고 위아래로)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const [rowDrag, setRowDrag] = useState<RowDrag | null>(null)
+  const rowDragRef = useRef<RowDrag | null>(null)
+  /** 드래그 직후 이어지는 click으로 수정 창이 열리지 않게 막는다 */
+  const suppressClickRef = useRef(false)
+
+  const updateRowDrag = (next: RowDrag | null) => {
+    rowDragRef.current = next
+    setRowDrag(next)
+  }
+
+  /** 포인터 y로 삽입 경계 인덱스(0..n)를 구한다. 각 행의 세로 중앙보다 아래면 그 행 다음. */
+  const slotAt = (clientY: number) => {
+    const body = bodyRef.current
+    if (!body) return 0
+    const y = clientY - body.getBoundingClientRect().top
+    let slot = 0
+    for (const r of rowsRef.current) {
+      if (y > r.top + r.height / 2) slot++
+      else break
+    }
+    return slot
+  }
+
+  const suppressNextClick = () => {
+    suppressClickRef.current = true
+    setTimeout(() => { suppressClickRef.current = false }, 0)
+  }
+
+  /** Esc로 취소한 뒤: 아직 누르고 있는 버튼을 놓을 때 생기는 click까지 무시한다 */
+  const suppressUntilRelease = () => {
+    suppressClickRef.current = true
+    const release = () => {
+      window.removeEventListener('pointerup', release, true)
+      window.removeEventListener('pointercancel', release, true)
+      // click은 pointerup 직후 같은 흐름에서 발생하므로 다음 틱에 해제
+      setTimeout(() => { suppressClickRef.current = false }, 0)
+    }
+    window.addEventListener('pointerup', release, true)
+    window.addEventListener('pointercancel', release, true)
+  }
+
+  const rowDragging = rowDrag !== null
+  useEffect(() => {
+    if (!rowDragging) return
+    let raf = 0
+    const onMove = (e: PointerEvent) => {
+      const d = rowDragRef.current
+      if (!d) return
+      const active = d.active || Math.abs(e.clientY - d.startY) >= ROW_DRAG_THRESHOLD
+      updateRowDrag({ ...d, y: e.clientY, active, slot: active ? slotAt(e.clientY) : d.slot })
+    }
+    const onUp = () => {
+      const d = rowDragRef.current
+      updateRowDrag(null)
+      if (!d || !d.active) return
+      suppressNextClick()
+      // 경계 인덱스 → 이동 후 인덱스 (아래로 옮길 때는 자기 자리가 빠진다)
+      const toIndex = d.slot > d.from ? d.slot - 1 : d.slot
+      if (toIndex !== d.from) useAppStore.getState().moveProject(d.projectId, toIndex)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      // 4px 전(누르고만 있는 상태)이든 드래그 중이든, 놓을 때의 click으로 수정 창이 열리지 않게 한다
+      if (rowDragRef.current) suppressUntilRelease()
+      updateRowDrag(null)
+    }
+    const onCancel = () => updateRowDrag(null)
+    // 가장자리 근처면 세로 자동 스크롤
+    const tick = () => {
+      const d = rowDragRef.current
+      const el = scrollRef.current
+      if (d?.active && el) {
+        const rect = el.getBoundingClientRect()
+        const topEdge = rect.top + HEADER_H
+        let dy = 0
+        if (d.y < topEdge + AUTO_SCROLL_EDGE) dy = -Math.min(1, (topEdge + AUTO_SCROLL_EDGE - d.y) / AUTO_SCROLL_EDGE)
+        else if (d.y > rect.bottom - AUTO_SCROLL_EDGE) dy = Math.min(1, (d.y - (rect.bottom - AUTO_SCROLL_EDGE)) / AUTO_SCROLL_EDGE)
+        if (dy !== 0) {
+          const before = el.scrollTop
+          el.scrollTop += Math.round(dy * AUTO_SCROLL_MAX) || Math.sign(dy)
+          if (el.scrollTop !== before) {
+            const slot = slotAt(d.y)
+            if (slot !== d.slot) updateRowDrag({ ...d, slot })
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('keydown', onKey, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowDragging])
+
+  const onNamePointerDown = (e: ReactPointerEvent, projectId: string, index: number) => {
+    if (e.button !== 0) return
+    updateRowDrag({ projectId, from: index, startY: e.clientY, y: e.clientY, active: false, slot: index })
+  }
+
+  const onNameClick = (projectId: string) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+    openProjectForm({ mode: 'edit', projectId })
+  }
+
+  const rowDragActive = rowDrag?.active ? rowDrag : null
+  // 제자리(자기 위·아래 경계)면 삽입선을 숨긴다
+  const insertTop = rowDragActive && rowDragActive.slot !== rowDragActive.from && rowDragActive.slot !== rowDragActive.from + 1
+    ? (rowDragActive.slot < rows.length ? rows[rowDragActive.slot].top : bodyH)
+    : null
+
   const isEmptyTarget = (e: { target: EventTarget }) => (e.target as HTMLElement).dataset.empty !== undefined
 
   const onRowPointerDown = (e: ReactPointerEvent, projectId: string) => {
@@ -396,7 +542,7 @@ export function Timeline() {
     <div className="timeline">
       <div
         ref={scrollRef}
-        className={`timeline__scroll zoom-${zoom}${drag?.moved ? ' is-dragging' : ''}`}
+        className={`timeline__scroll zoom-${zoom}${drag?.moved || rowDragActive ? ' is-dragging' : ''}`}
         onScroll={onScroll}
       >
         <div className="timeline__inner" style={{ width: NAME_W + totalW }}>
@@ -427,8 +573,8 @@ export function Timeline() {
           </div>
 
           {/* 프로젝트 행 */}
-          <div className="tl-body" style={{ height: Math.max(bodyH, 1) }}>
-            {rows.map((row) => {
+          <div ref={bodyRef} className="tl-body" style={{ height: Math.max(bodyH, 1) }}>
+            {rows.map((row, rowIndex) => {
               const { project } = row
               const bandLeft = xOf(project.startDate)
               const bandW = spanDays(project.startDate, project.endDate) * dw
@@ -440,14 +586,21 @@ export function Timeline() {
                 draggingId,
               )
               return (
-                <div key={project.id} className="tl-row" style={{ height: row.height }} data-project={project.id}>
+                <div
+                  key={project.id}
+                  className={`tl-row${rowDragActive?.projectId === project.id ? ' is-lifted' : ''}`}
+                  style={{ height: row.height }}
+                  data-project={project.id}
+                >
                   <button
                     type="button"
                     className="tl-row__name"
                     style={{ width: NAME_W }}
-                    onClick={() => openProjectForm({ mode: 'edit', projectId: project.id })}
-                    title="프로젝트 수정"
+                    onPointerDown={(e) => onNamePointerDown(e, project.id, rowIndex)}
+                    onClick={() => onNameClick(project.id)}
+                    title="프로젝트 수정 (끌어서 순서 변경)"
                   >
+                    <span className="tl-row__grip" aria-hidden="true" />
                     <span className="dot" style={{ background: project.color }} />
                     <span className="tl-row__text">
                       <span className="tl-row__title">{project.name}</span>
@@ -577,6 +730,7 @@ export function Timeline() {
               <div key={m.start} className="tl-month-line" style={{ left: NAME_W + xOf(m.start) }} />
             ))}
             <div className="tl-today-line" style={{ left: NAME_W + todayX }} />
+            {insertTop !== null && <div className="tl-insert-line" style={{ top: insertTop }} />}
           </div>
         </div>
       </div>
