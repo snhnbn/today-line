@@ -16,7 +16,10 @@ import { EmptyState } from './EmptyState'
 const DAY_WIDTH: Record<Zoom, number> = { week: 120, month: 32, quarter: 10 }
 const STEP_DAYS: Record<Zoom, number> = { week: 7, month: 30, quarter: 91 }
 const NAME_W = 200
-const HEADER_H = 52
+/** 헤더 = 월 줄 + 날짜 줄(숫자/요일 두 줄). CSS는 .timeline 의 --tl-* 변수로 같은 값을 쓴다. */
+const MONTH_ROW_H = 26
+const DAY_ROW_H = 38
+const HEADER_H = MONTH_ROW_H + DAY_ROW_H
 const LANE_H = 30
 const BLOCK_H = 24
 const MARKER_H = 26
@@ -516,14 +519,18 @@ export function Timeline() {
   }, [range.start, range.end])
 
   const dayLabels = useMemo(() => {
-    const labels: { iso: ISODate; text: string; kind: 'sun' | 'sat' | 'day' }[] = []
+    // 주·월 보기: 숫자 + 요일 두 줄. 분기 보기: 월요일마다 'M/D' 한 줄.
+    const labels: { iso: ISODate; text: string; weekday: string | null; kind: 'sun' | 'sat' | 'day' }[] = []
     for (let i = 0; i < range.days; i++) {
       const iso = addDaysISO(range.start, i)
       const wd = weekdayOf(iso)
       if (zoom === 'quarter' && wd !== 1) continue
-      const date = fromISO(iso).getDate()
-      const text = zoom === 'week' ? `${date} ${weekdayLabel(iso)}` : zoom === 'month' ? String(date) : formatShort(iso)
-      labels.push({ iso, text, kind: zoom === 'quarter' ? 'day' : wd === 0 ? 'sun' : wd === 6 ? 'sat' : 'day' })
+      const text = zoom === 'quarter' ? formatShort(iso) : String(fromISO(iso).getDate())
+      labels.push({
+        iso, text,
+        weekday: zoom === 'quarter' ? null : weekdayLabel(iso),
+        kind: zoom === 'quarter' ? 'day' : wd === 0 ? 'sun' : wd === 6 ? 'sat' : 'day',
+      })
     }
     return labels
   }, [range.start, range.days, zoom])
@@ -539,7 +546,14 @@ export function Timeline() {
     : null
 
   return (
-    <div className="timeline">
+    <div
+      className="timeline"
+      style={{
+        '--tl-month-h': `${MONTH_ROW_H}px`,
+        '--tl-days-h': `${DAY_ROW_H}px`,
+        '--tl-header-h': `${HEADER_H}px`,
+      } as CSSProperties}
+    >
       <div
         ref={scrollRef}
         className={`timeline__scroll zoom-${zoom}${drag?.moved || rowDragActive ? ' is-dragging' : ''}`}
@@ -564,7 +578,8 @@ export function Timeline() {
                     className={`tl-day tl-day--${d.kind}${d.iso === today ? ' tl-day--today' : ''}`}
                     style={zoom === 'quarter' ? { left: xOf(d.iso) + 2 } : { left: xOf(d.iso), width: dw }}
                   >
-                    {d.text}
+                    <span className="tl-day__num">{d.text}</span>
+                    {d.weekday && <span className="tl-day__wd">{d.weekday}</span>}
                   </span>
                 ))}
                 <span className="tl-today-label" style={{ left: todayX }}>오늘</span>
