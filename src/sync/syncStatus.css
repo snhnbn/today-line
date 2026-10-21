@@ -33,7 +33,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #2f9e44;
+  background: var(--success);
   flex: none;
 }
 
@@ -42,22 +42,22 @@
 }
 
 .sync__chip--busy .sync__dot {
-  background: var(--focus);
+  background: var(--accent);
   animation: sync-pulse 1s ease-in-out infinite;
 }
 
 .sync__chip--warn {
-  color: #9a5b00;
-  border-color: rgba(214, 140, 0, 0.45);
+  color: var(--warn);
+  border-color: var(--warn-line);
 }
 
 .sync__chip--warn .sync__dot {
-  background: #e8a200;
+  background: var(--warn);
 }
 
 .sync__chip--danger {
   color: var(--danger);
-  border-color: rgba(198, 40, 40, 0.4);
+  border-color: var(--danger-line);
 }
 
 .sync__chip--danger .sync__dot {

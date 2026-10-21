@@ -6,7 +6,7 @@ import type { Block, ISODate, Project } from '../types'
 import { useAppStore } from '../store/appStore'
 import { useUiStore, type Zoom } from '../store/uiStore'
 import { assignLanes, type LaneLayout } from '../lib/lanes'
-import { blockColor, textColorOn, withAlpha } from '../lib/color'
+import { blockColor, projectColor, textColorOn, withAlpha } from '../lib/color'
 import {
   addDaysISO, diffDays, endOfMonthISO, formatDotted, formatShort, formatShortWithDay, fromISO,
   maxISO, minISO, spanDays, startOfMonthISO, weekdayLabel, weekdayOf,
@@ -22,24 +22,32 @@ const DAY_ROW_H = 38
 const HEADER_H = MONTH_ROW_H + DAY_ROW_H
 const LANE_H = 30
 const BLOCK_H = 24
-const MARKER_H = 26
 const ROW_PAD = 10
 const MIN_ROW_H = 60
 /** '오늘' 위치에서 오늘 왼쪽으로 보이는 날짜 수 */
 const TODAY_LEAD_DAYS = 2
-/** 마커 요소 왼쪽 끝 ~ ◆ 중심 거리 (◆ 12px + 좌우 여백 2px) */
-const DIAMOND_HALF = 8
+/** 마커 요소(◆를 잡는 영역) 크기. 요소 왼쪽 끝 ~ ◆ 중심 거리는 그 절반 (CSS .marker 와 같은 값) */
+const MARKER_HIT = 18
+const DIAMOND_HALF = MARKER_HIT / 2
+/** 마커 줄 안에서 ◆ 요소의 위쪽 여백 */
+const MARKER_TOP = 1
+/** ◆ 요소 위쪽 ~ 라벨 위쪽 거리 */
+const LABEL_TOP = 20
+/** 라벨 한 줄 높이와 최대 줄 수 (CSS .marker__pill 과 같은 값). 위아래 안쪽 여백 1px씩. */
+const LABEL_LINE_H = 14
+const LABEL_LINES = 2
+/** 마커 줄 높이 = ◆ + 라벨 최대 2줄 + 여유 */
+const MARKER_H = MARKER_TOP + LABEL_TOP + LABEL_LINE_H * LABEL_LINES + 2 + 3
 /** 같은 날짜에 겹친 ◆를 옆으로 어긋나게 놓는 간격 */
 const STACK_STEP = 5
 /** 겹친 ◆ 표시 최대 개수 (그 이상은 같은 자리에 겹친다) */
 const STACK_MAX = 3
-/** ◆와 라벨 사이 간격(.marker gap) + 다음 ◆ 앞 여백 */
-const LABEL_GAP = 6
-const NEXT_MARGIN = 10
-/** 다음 마커가 없을 때 라벨 최대 폭 */
-const LABEL_MAX_W = 240
-/** 이보다 좁으면 라벨을 숨기고 ◆만 보인다 */
-const LABEL_MIN_W = 18
+/** 이웃 마커 라벨과 띄우는 간격 */
+const LABEL_GAP = 2
+/** 이웃이 멀 때 라벨 최대 폭 */
+const LABEL_MAX_W = 132
+/** 이보다 좁으면(한 줄에 두 글자가 안 들어가면) 라벨을 숨기고 ◆만 보인다. 월 보기 하루 간격(약 30px)은 보인다. */
+const LABEL_MIN_W = 28
 
 type BlockDragType = 'move' | 'start' | 'end'
 type Drag =
@@ -87,15 +95,34 @@ interface MarkerPlacement {
   count: number
   /** ◆를 옆으로 어긋나게 놓는 거리(px) */
   offset: number
-  /** 대표 마커만: 라벨 최대 폭(px). null이면 라벨 숨김 */
-  labelMaxW: number | null
+  /** 대표 마커만: ◆ 아래 라벨 상자. null이면 라벨 숨김 */
+  label: MarkerLabelBox | null
   /** 대표 마커만: 같은 날짜 마커 전체 제목 */
   titles: string[]
 }
 
+interface MarkerLabelBox {
+  /** 대표 ◆ 중심 기준 라벨 상자 왼쪽 끝(px) */
+  left: number
+  /** 라벨 상자 폭(px). 글자는 이 안에서 최대 2줄로 줄바꿈된다 */
+  width: number
+  /** 글자 덩어리를 ◆ 묶음 중심에 맞추려고 왼쪽/오른쪽에 두는 여백 기준값(px). 공간이 모자라면 줄어든다 */
+  padL: number
+  padR: number
+}
+
+/** 같은 날짜 묶음 대표: 만든 순서(createdAt, 없으면 id) 오름차순 첫 번째. 새로고침해도 바뀌지 않는다. */
+function byCreated(a: Block, b: Block): number {
+  const ca = a.createdAt ?? ''
+  const cb = b.createdAt ?? ''
+  if (ca !== cb) return ca < cb ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 /**
- * 한 행의 마커를 한 줄에 놓는다. 같은 날짜 마커는 ◆를 조금씩 어긋나게 겹치고 첫 마커만 라벨('외 n개')을 단다.
- * 라벨은 오른쪽 가장 가까운 다른 날짜 마커의 ◆ 앞까지만 쓴다.
+ * 한 행의 마커를 한 줄에 놓는다. 같은 날짜 마커는 ◆를 조금씩 어긋나게 겹치고 대표만 라벨('외 n개')을 단다.
+ * 라벨은 ◆ 아래에 가운데 정렬로 둔다. 쓸 수 있는 폭은 왼쪽·오른쪽 이웃 ◆ 묶음과의 중간점까지이고,
+ * 한쪽이 좁으면 넓은 쪽으로 밀어서 폭을 확보한다(최대 LABEL_MAX_W).
  */
 function placeMarkers(
   items: { block: Block; day: number }[], dw: number, firstId: string | null,
@@ -103,26 +130,49 @@ function placeMarkers(
   const groups = new Map<number, Block[]>()
   for (const { block, day } of items) {
     const g = groups.get(day)
-    // 드래그 중인 마커는 묶음의 대표(맨 앞)로 둔다
-    if (g) g[block.id === firstId ? 'unshift' : 'push'](block)
+    if (g) g.push(block)
     else groups.set(day, [block])
   }
+  for (const g of groups.values()) {
+    g.sort(byCreated)
+    // 드래그 중인 마커는 묶음의 대표(맨 앞)로 둔다
+    const i = g.findIndex((b) => b.id === firstId)
+    if (i > 0) g.unshift(...g.splice(i, 1))
+  }
   const days = [...groups.keys()].sort((a, b) => a - b)
+  const stackW = (day: number) => Math.min(groups.get(day)!.length - 1, STACK_MAX - 1) * STACK_STEP
+  /** ◆ 묶음 가운데 x (캔버스 기준) */
+  const centerOf = (day: number) => day * dw + dw / 2 + stackW(day) / 2
   const result = new Map<string, MarkerPlacement>()
   days.forEach((day, i) => {
     const group = groups.get(day)!
     const count = group.length
-    const stackW = Math.min(count - 1, STACK_MAX - 1) * STACK_STEP
+    const c = centerOf(day)
+    const prev = days[i - 1]
     const next = days[i + 1]
-    const avail = next === undefined
-      ? LABEL_MAX_W
-      : Math.min(LABEL_MAX_W, (next - day) * dw - DIAMOND_HALF - stackW - LABEL_GAP - NEXT_MARGIN)
-    const labelMaxW = avail >= LABEL_MIN_W ? avail : null
+    // 이 묶음이 쓸 수 있는 왼쪽·오른쪽 여유: 이웃 묶음 중심과의 중간점까지
+    const roomL = prev === undefined ? c : (c - centerOf(prev)) / 2 - LABEL_GAP / 2
+    const roomR = next === undefined ? Infinity : (centerOf(next) - c) / 2 - LABEL_GAP / 2
+    const width = Math.floor(Math.min(LABEL_MAX_W, Math.max(0, roomL) + Math.max(0, roomR)))
+    let label: MarkerLabelBox | null = null
+    if (width >= LABEL_MIN_W) {
+      // 가운데 정렬을 기본으로, 한쪽이 모자라면 반대쪽으로 민다
+      let extL = width / 2
+      let extR = width / 2
+      if (extR > roomR) { extR = Math.max(0, roomR); extL = width - extR }
+      if (extL > roomL) { extL = Math.max(0, roomL); extR = width - extL }
+      label = {
+        left: stackW(day) / 2 - extL,
+        width,
+        padL: Math.max(0, extL - extR),
+        padR: Math.max(0, extR - extL),
+      }
+    }
     const titles = group.map((b) => b.title || '(제목 없음)')
     group.forEach((b, index) => {
       result.set(b.id, {
         index, count, offset: Math.min(index, STACK_MAX - 1) * STACK_STEP,
-        labelMaxW: index === 0 ? labelMaxW : null, titles: index === 0 ? titles : [],
+        label: index === 0 ? label : null, titles: index === 0 ? titles : [],
       })
     })
   })
@@ -591,6 +641,7 @@ export function Timeline() {
           <div ref={bodyRef} className="tl-body" style={{ height: Math.max(bodyH, 1) }}>
             {rows.map((row, rowIndex) => {
               const { project } = row
+              const pColor = projectColor(project)
               const bandLeft = xOf(project.startDate)
               const bandW = spanDays(project.startDate, project.endDate) * dw
               const ghost = drag?.type === 'create' && drag.moved && drag.projectId === project.id ? drag : null
@@ -616,7 +667,7 @@ export function Timeline() {
                     title="프로젝트 수정 (끌어서 순서 변경)"
                   >
                     <span className="tl-row__grip" aria-hidden="true" />
-                    <span className="dot" style={{ background: project.color }} />
+                    <span className="dot" style={{ background: pColor }} />
                     <span className="tl-row__text">
                       <span className="tl-row__title">{project.name}</span>
                       <span className="tl-row__dates">{formatDotted(project.startDate)} ~ {formatDotted(project.endDate)}</span>
@@ -632,7 +683,7 @@ export function Timeline() {
                     <div
                       className="tl-band"
                       data-empty=""
-                      style={{ left: bandLeft, width: bandW, background: withAlpha(project.color, 0.1), borderColor: withAlpha(project.color, 0.35) }}
+                      style={{ left: bandLeft, width: bandW, background: withAlpha(pColor, 0.13), borderColor: withAlpha(pColor, 0.34) }}
                     />
 
                     {row.periods.map((b) => {
@@ -680,7 +731,7 @@ export function Timeline() {
                       const place = markerPlaces.get(b.id)
                       const offset = place?.offset ?? 0
                       const extra = place && place.index === 0 ? place.count - 1 : 0
-                      const showLabel = !!place && place.index === 0 && place.labelMaxW !== null
+                      const label = place?.label ?? null
                       const outside = start < project.startDate || start > project.endDate
                       const cls = [
                         'marker',
@@ -697,7 +748,7 @@ export function Timeline() {
                           data-block={b.id}
                           style={{
                             left: xOf(start) + dw / 2 - DIAMOND_HALF + offset,
-                            top: ROW_PAD + row.periodLanes.laneCount * LANE_H,
+                            top: ROW_PAD + row.periodLanes.laneCount * LANE_H + MARKER_TOP,
                             zIndex: draggingId === b.id ? 4 : place && place.index > 0 ? 1 : 2,
                           }}
                           title={`${b.title}\n${formatShortWithDay(start)}${outside ? '\n⚠ 프로젝트 기간 밖' : ''}${
@@ -706,17 +757,24 @@ export function Timeline() {
                           onPointerDown={(e) => onBlockPointerDown(e, b)}
                         >
                           <span className="marker__diamond" style={{ background: color }} />
-                          {showLabel && (
+                          {label && (
                             <span
                               className="marker__label"
                               style={{
-                                maxWidth: place!.labelMaxW!,
-                                marginLeft: Math.min(place!.count - 1, STACK_MAX - 1) * STACK_STEP,
-                              }}
+                                top: LABEL_TOP,
+                                left: DIAMOND_HALF + label.left,
+                                width: label.width,
+                                '--pad-l': `${label.padL}px`,
+                                '--pad-r': `${label.padR}px`,
+                              } as CSSProperties}
                             >
-                              {b.done && <span className="block__check">✓</span>}
-                              <span className="marker__text">{b.title || '(제목 없음)'}</span>
-                              {extra > 0 && <span className="marker__more">외 {extra}개</span>}
+                              <span className="marker__pill">
+                                <span className={`marker__text${extra > 0 ? ' marker__text--one' : ''}`}>
+                                  {b.done && <span className="block__check">✓</span>}
+                                  {b.title || '(제목 없음)'}
+                                </span>
+                                {extra > 0 && <span className="marker__more">외 {extra}개</span>}
+                              </span>
                             </span>
                           )}
                         </div>
@@ -731,7 +789,7 @@ export function Timeline() {
                           width: (Math.abs(ghost.current - ghost.anchor) + 1) * dw - 2,
                           top: ROW_PAD,
                           height: BLOCK_H,
-                          background: withAlpha(project.color, 0.45),
+                          background: withAlpha(pColor, 0.45),
                         }}
                       />
                     )}

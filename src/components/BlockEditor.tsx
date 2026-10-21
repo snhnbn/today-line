@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useUiStore } from '../store/uiStore'
 import { isValidISO, spanDays } from '../lib/date'
+import { projectColor } from '../lib/color'
 import { ColorPicker } from './ColorPicker'
 
 const WIDTH = 320
@@ -46,7 +47,7 @@ export function BlockEditor() {
       <div className="backdrop backdrop--clear" onPointerDown={closeEditor} />
       <div ref={ref} className="popover" style={{ ...pos, width: WIDTH }} role="dialog" aria-label="항목 편집">
         <div className="popover__head">
-          <span className="dot" style={{ background: project.color }} />
+          <span className="dot" style={{ background: projectColor(project) }} />
           <span className="popover__project">{project.name}</span>
           <button type="button" className="icon-btn" onClick={closeEditor} aria-label="닫기">✕</button>
         </div>
@@ -105,7 +106,7 @@ export function BlockEditor() {
 
         <div className="field">
           <span>색상</span>
-          <ColorPicker value={block.color} inheritColor={project.color} onChange={(color) => updateBlock(block.id, { color })} />
+          <ColorPicker value={block.color} inheritColor={projectColor(project)} onChange={(color) => updateBlock(block.id, { color })} />
         </div>
 
         <label className="field">
